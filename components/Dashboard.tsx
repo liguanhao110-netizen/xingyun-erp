@@ -224,8 +224,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, salesData, adsDa
                 <Tooltip 
                   contentStyle={{backgroundColor: '#fff', borderRadius: '8px', border: '1px solid #e2e8f0'}}
                   formatter={(value: any, name: string) => {
-                    const mapName: any = { sales: '销售额', profit: '净利润', ads: '广告费', acos: 'ACOS' };
-                    return [name === 'acos' ? value.toFixed(2) + '%' : '$' + value.toFixed(2), mapName[name] || name];
+                    // 修复 ACOS 显示为 $ 的 Bug
+                    if (name === 'ACOS') {
+                        return [value.toFixed(2) + '%', name];
+                    }
+                    return ['$' + value.toFixed(2), name];
                   }}
                 />
                 <Bar yAxisId="left" dataKey="sales" fill="#3b82f6" name="销售额" />

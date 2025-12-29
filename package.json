@@ -1,23 +1,57 @@
 {
-  "name": "crossborder-pro-erp",
+  "name": "nebula-erp-desktop",
   "private": true,
-  "version": "0.0.0",
-  "type": "module",
+  "version": "14.0.0",
+  "main": "electron/main.js",
+  "description": "CrossBorder Pro ERP Desktop Application",
+  "author": "Nebula Architect",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "electron:dev": "vite",
+    "build:mac": "vite build && electron-builder --mac",
+    "build:win": "vite build && electron-builder --win"
   },
   "dependencies": {
-    "react": "^19.2.3",
-    "react-dom": "^19.2.3",
-    "lucide-react": "^0.562.0",
-    "recharts": "^3.6.0"
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "lucide-react": "^0.263.1",
+    "recharts": "^2.7.2",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
-    "@types/node": "^22.14.0",
-    "@vitejs/plugin-react": "^5.0.0",
-    "typescript": "~5.8.2",
-    "vite": "^6.2.0"
+    "@types/react": "^18.2.15",
+    "@types/react-dom": "^18.2.7",
+    "@vitejs/plugin-react": "^4.0.3",
+    "typescript": "^5.0.2",
+    "vite": "^4.4.5",
+    "electron": "^28.0.0",
+    "electron-builder": "^24.9.1"
+  },
+  "build": {
+    "appId": "com.nebula.erp",
+    "productName": "Nebula ERP",
+    "copyright": "Copyright © 2025 Nebula Corp",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*"
+    ],
+    "mac": {
+      "target": "dmg",
+      "icon": "public/icon.icns"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "public/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    }
   }
 }
