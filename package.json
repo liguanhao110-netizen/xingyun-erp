@@ -3,6 +3,7 @@
   "private": true,
   "version": "14.0.0",
   "main": "electron/main.js",
+  "homepage": "./",
   "description": "CrossBorder Pro ERP Desktop Application",
   "author": "Nebula Architect",
   "scripts": {

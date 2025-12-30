@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useDeferredValue } from 'react';
 import { Product, SaleRecord, InventoryState, AppSettings } from '../types';
 
 interface InventoryProps {
@@ -15,33 +15,60 @@ export const Inventory: React.FC<InventoryProps> = ({
   products, salesData, inventoryState, settings, onUpdateInventory, onUpdateSettings, onSave 
 }) => {
   const [search, setSearch] = useState('');
+  // 1. 性能优化：延迟处理搜索词，保证输入框打字丝般顺滑，不卡顿
+  const deferredSearch = useDeferredValue(search);
 
   const list = useMemo(() => {
     const now = new Date();
+    
+    // --- 2. 核心算法优化 (Hash Map Pre-indexing) ---
+    // 不要再 map 里面 filter，那是 O(N*M) 的灾难
+    // 先把 Sales 按 SKU 归类，变成 O(N+M)
+    const salesMap = new Map<string, SaleRecord[]>();
+    salesData.forEach(s => {
+      if (!salesMap.has(s.sku)) {
+        salesMap.set(s.sku, []);
+      }
+      salesMap.get(s.sku)!.push(s);
+    });
+
+    // 预计算常用的日期对象，避免循环内重复 new Date()
+    const d7 = new Date(); d7.setDate(now.getDate() - 7);
+    const d30 = new Date(); d30.setDate(now.getDate() - 30);
     
     // 1. Calculate All Data First
     const calculatedList = products.map(p => {
       const s = inventoryState[p.sku] || { baseQty: 0, baseDate: '', inbound: 0, daily: 0 };
       
+      // 直接从 Map 取出该 SKU 的所有订单，没有就是空数组
+      const skuSales = salesMap.get(p.sku) || [];
+
       // Snapshot Calibration (Current Stock)
       let salesSince = 0;
-      if (s.baseDate) {
-        const baseD = new Date(s.baseDate);
-        salesData.forEach(order => {
-          if (order.sku === p.sku && order.type === 'Sale' && new Date(order.date) > baseD) {
-            salesSince += 1;
-          }
-        });
-      }
+      let count7 = 0;
+      let count30 = 0;
+
+      // 解析基准日期
+      const baseD = s.baseDate ? new Date(s.baseDate) : null;
+
+      // 单次遍历该SKU的订单 (大幅提速)
+      skuSales.forEach(order => {
+        if (order.type !== 'Sale') return;
+        const oDate = new Date(order.date);
+
+        // 算库存扣减
+        if (baseD && oDate > baseD) {
+          salesSince += 1;
+        }
+
+        // 算销量加权
+        if (oDate >= d7) count7++;
+        if (oDate >= d30) count30++;
+      });
+
       const currentStock = Math.max(0, (s.baseQty || 0) - salesSince);
 
-      // Dual-Track Velocity Logic
-      const d7 = new Date(); d7.setDate(now.getDate() - 7);
-      const count7 = salesData.filter(x => x.sku === p.sku && x.type === 'Sale' && new Date(x.date) >= d7).length;
       const avg7 = count7 / 7;
-
-      const d30 = new Date(); d30.setDate(now.getDate() - 30);
-      const count30 = salesData.filter(x => x.sku === p.sku && x.type === 'Sale' && new Date(x.date) >= d30).length;
       const avg30 = count30 / 30;
 
       const algoDaily = (avg7 * 0.6) + (avg30 * 0.4);
@@ -86,7 +113,7 @@ export const Inventory: React.FC<InventoryProps> = ({
 
       return { 
         sku: p.sku, 
-        parent_sku: p.parent_sku, // Ensure parent_sku is passed
+        parent_sku: p.parent_sku, 
         name: p.name, 
         inv: s, 
         currentStock, 
@@ -107,17 +134,17 @@ export const Inventory: React.FC<InventoryProps> = ({
       };
     });
 
-    // 2. Apply Filter (Fuzzy Search)
-    if (!search.trim()) return calculatedList;
+    // 3. Apply Filter (Fuzzy Search)
+    // 使用 deferredSearch 而不是 search，避免输入时阻塞
+    if (!deferredSearch.trim()) return calculatedList;
     
-    const terms = search.toLowerCase().split(/\s+/).filter(t => t);
+    const terms = deferredSearch.toLowerCase().split(/\s+/).filter(t => t);
     return calculatedList.filter(item => {
       const searchString = `${item.sku} ${item.parent_sku} ${item.name}`.toLowerCase();
-      // "Search Parent -> Show Children" is handled naturally here because item.parent_sku is part of the search string
       return terms.every(term => searchString.includes(term));
     });
 
-  }, [products, salesData, inventoryState, settings, search]);
+  }, [products, salesData, inventoryState, settings, deferredSearch]); // 依赖项改为 deferredSearch
 
   const formatCurrency = (val: number) => '$' + (val || 0).toFixed(2);
   const formatDate = () => new Date().toISOString().split('T')[0];

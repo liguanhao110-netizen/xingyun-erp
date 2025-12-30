@@ -40,6 +40,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, salesData, adsDa
     const fSales = salesData.filter(s => dateRangeFilter(s.date));
     const fAds = adsData.filter(a => dateRangeFilter(a.date));
 
+    // --- 性能优化核心：预建立 Product 索引 (O(1) lookup) ---
+    // 避免在 fSales 循环中每次都执行 products.find() (O(N))
+    const productMap = new Map<string, Product>();
+    products.forEach(p => productMap.set(p.sku, p));
+    // -----------------------------------------------------
+
     // 2. Build Tree & Calculate
     const tree: Record<string, any> = {};
     const kpi: KPI = { revenue: 0, netProfit: 0, roi: '0', margin: '0', acos: '0', netUnits: 0, totalRefundQty: 0, totalRefundAmt: 0 };
@@ -61,7 +67,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, salesData, adsDa
 
     // Process Sales
     fSales.forEach(s => {
-      const p = products.find(x => x.sku === s.sku);
+      // 优化：使用 Map 获取，速度提升显著
+      const p = productMap.get(s.sku);
       if (!p) return;
       const parent = tree[p.parent_sku];
       if (!parent) return; 
@@ -91,6 +98,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, salesData, adsDa
         parentRev += c.revenue;
       });
 
+      // Ads filtering is usually smaller volume, filter is ok here
       const adsTotal = fAds.filter(a => a.parent_sku === parent.sku).reduce((sum, a) => sum + a.total_spend, 0);
       parent.adsTotal = adsTotal;
       adsTotalAll += adsTotal;
@@ -121,12 +129,12 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, salesData, adsDa
     const totalExp = kpi.revenue - kpi.netProfit;
     kpi.roi = totalExp > 0 ? ((kpi.netProfit / totalExp) * 100).toFixed(1) : '0.0';
 
-    return { kpi, parents: Object.values(tree) as ParentStat[], fSales, fAds, start, end };
+    return { kpi, parents: Object.values(tree) as ParentStat[], fSales, fAds, start, end, productMap };
   }, [salesData, adsData, products, settings, filters]);
 
   // --- Chart Data Granularity ---
   const { chartData, granularityText } = useMemo(() => {
-    const { start, end, fSales, fAds } = stats;
+    const { start, end, fSales, fAds, productMap } = stats;
     const diffDays = (end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24);
     const isMonthly = diffDays > 62;
     const granularityText = isMonthly ? '月视图' : '日视图';
@@ -152,7 +160,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, salesData, adsDa
     fSales.forEach(s => {
        const k = isMonthly ? s.date.slice(0, 7) : s.date;
        if (map[k]) {
-         const p = products.find(x => x.sku === s.sku);
+         // 优化：使用预构建的 Map
+         const p = productMap.get(s.sku);
          const unitCost = p ? (p.cost_cny + p.ship_cny) / settings.exchangeRate : 0;
          if (s.type === 'Sale') {
            map[k].rev += s.amount;
@@ -182,7 +191,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ products, salesData, adsDa
 
     return { chartData: data, granularityText };
 
-  }, [stats, products, settings.exchangeRate]);
+  }, [stats, settings.exchangeRate]);
 
   const formatCurrency = (val: number) => '$' + (val || 0).toFixed(2);
 

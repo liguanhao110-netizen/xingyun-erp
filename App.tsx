@@ -11,9 +11,18 @@ import { ParentDetail } from './components/ParentDetail';
 import { Toast, ToastType } from './components/Toast';
 import { NAV_ITEMS, DEFAULT_SETTINGS } from './constants';
 import { ModuleType, NebulaDatabase, Product, SaleRecord, AdRecord, InventoryState, AppSettings, ParentStat } from './types';
+import * as XLSX from 'xlsx';
 
-// Local Storage Key
-const DB_KEY = 'nebula_v14_db';
+// --- Safe IPC Loader ---
+// Prevents white screen crash if running in browser or if Electron bridge fails
+const ipcRenderer = (window as any).require 
+  ? (window as any).require('electron').ipcRenderer 
+  : {
+      invoke: async (channel: string, ...args: any[]) => {
+        console.warn(`[Nebula IPC Mock] Call to '${channel}' skipped because App is not running in Electron.`);
+        return null;
+      }
+    };
 
 // Helper to handle Excel Date
 const excelDateToJS = (serial: any) => {
@@ -45,22 +54,27 @@ function App() {
     endDate: '2025-12-31'
   });
 
+  // Load Data from File System on Boot
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(DB_KEY);
-      if (raw) {
-        const db: NebulaDatabase = JSON.parse(raw);
-        if (db.p) setProducts(db.p);
-        if (db.s) setSalesData(db.s);
-        if (db.a) setAdsData(db.a);
-        if (db.i) setInventoryState(db.i);
-        if (db.st) setSettings(prev => ({ ...prev, ...db.st }));
+    const loadData = async () => {
+      try {
+        const db = await ipcRenderer.invoke('load-db');
+        if (db) {
+          if (db.p) setProducts(db.p);
+          if (db.s) setSalesData(db.s);
+          if (db.a) setAdsData(db.a);
+          if (db.i) setInventoryState(db.i);
+          if (db.st) setSettings(prev => ({ ...prev, ...db.st }));
+        }
+      } catch (e) {
+        console.error("Failed to load Nebula DB from disk", e);
+        showToast("读取数据失败 (如果是浏览器环境请忽略)", "error");
       }
-    } catch (e) {
-      console.error("Failed to load Nebula DB", e);
-    }
+    };
+    loadData();
   }, []);
 
+  // Save Data to File System
   const saveData = () => {
     const db: NebulaDatabase = {
       p: products,
@@ -69,7 +83,14 @@ function App() {
       i: inventoryState,
       st: settings
     };
-    localStorage.setItem(DB_KEY, JSON.stringify(db));
+    // 发送给主进程写入硬盘，不阻塞 UI
+    ipcRenderer.invoke('save-db', JSON.stringify(db));
+  };
+
+  // Clear Data (Hard Delete)
+  const handleClearData = async () => {
+    await ipcRenderer.invoke('clear-db');
+    window.location.reload();
   };
 
   const showToast = (message: string, type: ToastType = 'success') => {
@@ -155,8 +176,14 @@ function App() {
       shipping_fee: Number(r['实际尾程运费(USD)']),
       storage_fee: Number(r['订单仓储费(USD)'] || 0)
     }));
-    setSalesData(prev => [...prev, ...mapped]);
-    saveData();
+    setSalesData(prev => {
+        const next = [...prev, ...mapped];
+        // Immediate save after import to prevent loss
+        ipcRenderer.invoke('save-db', JSON.stringify({
+            p: products, s: next, a: adsData, i: inventoryState, st: settings
+        }));
+        return next;
+    });
   };
 
   const handleImportAds = (data: any[]) => {
@@ -165,8 +192,13 @@ function App() {
       parent_sku: r['父体SKU'],
       total_spend: Number(r['总花费(USD)'])
     }));
-    setAdsData(prev => [...prev, ...mapped]);
-    saveData();
+    setAdsData(prev => {
+        const next = [...prev, ...mapped];
+        ipcRenderer.invoke('save-db', JSON.stringify({
+            p: products, s: salesData, a: next, i: inventoryState, st: settings
+        }));
+        return next;
+    });
   };
 
   const handleImportInventory = (data: any[]) => {
@@ -181,7 +213,10 @@ function App() {
       newState[s].daily = r['预估日销量'] || r['人工日销'] || 0;
     });
     setInventoryState(newState);
-    saveData();
+    // Immediate save
+    ipcRenderer.invoke('save-db', JSON.stringify({
+        p: products, s: salesData, a: adsData, i: newState, st: settings
+    }));
   };
 
   const handleImportProducts = (data: any[]) => {
@@ -194,27 +229,33 @@ function App() {
       storage_usd: r['单件月度仓储费(USD)'],
       last_mile_usd: r['默认尾程运费(USD)']
     }));
-    const newSkus = new Set(mapped.map(p => p.sku));
-    const filteredCurrent = products.filter(p => !newSkus.has(p.sku));
-    setProducts([...filteredCurrent, ...mapped]);
-    saveData();
+    setProducts(prev => {
+        const newSkus = new Set(mapped.map(p => p.sku));
+        const filteredCurrent = prev.filter(p => !newSkus.has(p.sku));
+        const next = [...filteredCurrent, ...mapped];
+        ipcRenderer.invoke('save-db', JSON.stringify({
+            p: next, s: salesData, a: adsData, i: inventoryState, st: settings
+        }));
+        return next;
+    });
   };
 
   const handleExportBackup = () => {
-    const XLSX = (window as any).XLSX;
-    if (!XLSX) {
-      showToast("XLSX组件未加载", 'error');
-      return;
-    }
     const wb = XLSX.utils.book_new();
+    
+    // 1. Products
     const pSheet = products.map(x => ({ "子体SKU":x.sku, "父体SKU":x.parent_sku, "中文名称":x.name, "采购成本(CNY)":x.cost_cny, "头程运费(CNY)":x.ship_cny, "单件月度仓储费(USD)":x.storage_usd, "默认尾程运费(USD)":x.last_mile_usd }));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(pSheet), "Products");
+    
+    // 2. Sales
     const sSheet = salesData.map(x => ({ "订单号":x.order_id, "日期":x.date, "子体SKU":x.sku, "类型":x.type, "金额(USD)":x.amount, "实际尾程运费(USD)":x.shipping_fee, "订单仓储费(USD)":x.storage_fee }));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sSheet), "Sales");
+    
+    // 3. Ads
     const aSheet = adsData.map(x => ({ "日期":x.date, "父体SKU":x.parent_sku, "总花费(USD)":x.total_spend }));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(aSheet), "Ads");
     
-    // Inventory Backup includes new fields
+    // 4. Inventory State
     const iSheet = Object.keys(inventoryState).map(k => ({
       "子体SKU": k,
       "盘点基数": inventoryState[k].baseQty,
@@ -225,30 +266,48 @@ function App() {
     }));
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(iSheet), "Inventory");
 
+    // 5. Global Settings (新增：确保库存计算逻辑闭环)
+    const stSheet = [{
+       "汇率": settings.exchangeRate,
+       "备货周期": settings.leadTime,
+       "安全库存": settings.safetyStock,
+       "滞销阈值": settings.deadStockThreshold
+    }];
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(stSheet), "Settings");
+
     XLSX.writeFile(wb, `Nebula_Backup_${new Date().toISOString().slice(0,10)}.xlsx`);
-    showToast("备份文件已生成下载", 'success');
+    showToast("全站备份已导出 (含库存设置)", 'success');
   };
 
   const handleImportBackup = (file: File) => {
-    const XLSX = (window as any).XLSX;
     const reader = new FileReader();
     reader.onload = (evt) => {
       try {
         const wb = XLSX.read(evt.target?.result, {type:'binary'});
+        
+        let newP = products;
+        let newS = salesData;
+        let newA = adsData;
+        let newI = inventoryState;
+        let newSt = settings;
+
         if (wb.Sheets['Products']) {
           const d = XLSX.utils.sheet_to_json(wb.Sheets['Products']);
           const mapped = d.map((r:any) => ({ sku:r['子体SKU'], parent_sku:r['父体SKU'], name:r['中文名称'], cost_cny:r['采购成本(CNY)'], ship_cny:r['头程运费(CNY)'], storage_usd:r['单件月度仓储费(USD)'], last_mile_usd:r['默认尾程运费(USD)'] }));
           setProducts(mapped);
+          newP = mapped;
         }
         if (wb.Sheets['Sales']) {
           const d = XLSX.utils.sheet_to_json(wb.Sheets['Sales']);
           const mapped = d.map((r:any) => ({ order_id:r['订单号'], date:excelDateToJS(r['日期']), sku:r['子体SKU'], type:r['类型'], amount:r['金额(USD)'], shipping_fee:r['实际尾程运费(USD)'], storage_fee:r['订单仓储费(USD)'] }));
           setSalesData(mapped);
+          newS = mapped;
         }
         if (wb.Sheets['Ads']) {
           const d = XLSX.utils.sheet_to_json(wb.Sheets['Ads']);
           const mapped = d.map((r:any) => ({ date:excelDateToJS(r['日期']), parent_sku:r['父体SKU'], total_spend:r['总花费(USD)'] }));
           setAdsData(mapped);
+          newA = mapped;
         }
         if (wb.Sheets['Inventory']) {
            const d = XLSX.utils.sheet_to_json(wb.Sheets['Inventory']);
@@ -263,9 +322,31 @@ function App() {
               };
            });
            setInventoryState(newState);
+           newI = newState;
         }
-        saveData();
-        showToast("数据恢复成功！系统已更新", 'success');
+        
+        // 5. Restore Settings (新增)
+        if (wb.Sheets['Settings']) {
+            const d = XLSX.utils.sheet_to_json(wb.Sheets['Settings']);
+            if (d && d.length > 0) {
+                const r: any = d[0];
+                const restoredSettings = {
+                    exchangeRate: r['汇率'] || 7.2,
+                    leadTime: r['备货周期'] || 60,
+                    safetyStock: r['安全库存'] || 30,
+                    deadStockThreshold: r['滞销阈值'] || 120
+                };
+                setSettings(restoredSettings);
+                newSt = restoredSettings;
+            }
+        }
+        
+        // Immediate Save Full DB
+        ipcRenderer.invoke('save-db', JSON.stringify({
+            p: newP, s: newS, a: newA, i: newI, st: newSt
+        }));
+
+        showToast("数据恢复成功！库存与系统设置已同步。", 'success');
       } catch(e) {
         showToast("备份文件解析失败", 'error');
       }
@@ -286,7 +367,7 @@ function App() {
       case ModuleType.PRODUCTS:
         return <ProductManager products={products} onAddProduct={handleAddProduct} onUpdateProduct={handleUpdateProduct} onDeleteProduct={handleDeleteProduct} onSave={saveData} />;
       case ModuleType.SETTINGS:
-        return <Settings settings={settings} onUpdateSettings={handleUpdateSettings} onClearData={() => { localStorage.removeItem(DB_KEY); window.location.reload(); }} onSave={() => { saveData(); showToast("系统设置已保存"); }} />;
+        return <Settings settings={settings} onUpdateSettings={handleUpdateSettings} onClearData={handleClearData} onSave={() => { saveData(); showToast("系统设置已保存"); }} />;
       case ModuleType.DATACENTER:
         return <DataCenter onImportSales={handleImportSales} onImportAds={handleImportAds} onImportProducts={handleImportProducts} onImportInventory={handleImportInventory} onExportBackup={handleExportBackup} onImportBackup={handleImportBackup} onNotify={showToast} />;
       case ModuleType.PARENT_DETAIL:

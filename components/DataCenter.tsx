@@ -1,4 +1,5 @@
 import React from 'react';
+import * as XLSX from 'xlsx';
 
 interface DataCenterProps {
   onImportSales: (data: any[]) => void;
@@ -19,13 +20,6 @@ export const DataCenter: React.FC<DataCenterProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
     
-    // Check if XLSX is available globally
-    const XLSX = (window as any).XLSX;
-    if (!XLSX) {
-      onNotify("XLSX library not loaded. Please check network.", 'error');
-      return;
-    }
-
     const reader = new FileReader();
     reader.onload = (evt) => {
       try {
@@ -52,12 +46,6 @@ export const DataCenter: React.FC<DataCenterProps> = ({
   };
 
   const dlTemplate = (type: string) => {
-    const XLSX = (window as any).XLSX;
-    if (!XLSX) {
-      onNotify("XLSX library not ready.", 'error');
-      return;
-    }
-    
     let data: any[] = [];
     if(type === 'sales') data = [{ "订单号":"ORD-01", "日期":"2025-01-01", "子体SKU":"Sku-A", "类型":"Sale", "金额(USD)":100, "实际尾程运费(USD)":10, "订单仓储费(USD)":1 }];
     else if(type === 'ads') data = [{ "日期":"2025-01-01", "父体SKU":"Parent-A", "总花费(USD)":50 }];
@@ -101,7 +89,7 @@ export const DataCenter: React.FC<DataCenterProps> = ({
        <div className="bg-white rounded-xl shadow-sm p-6 border border-slate-200">
          <h3 className="font-bold text-slate-700 mb-6 border-b border-slate-100 pb-3 flex items-center gap-2">
             <span className="w-8 h-8 rounded-full bg-green-50 text-green-600 flex items-center justify-center text-sm"><i className="fas fa-boxes"></i></span>
-            2. 库存与产品 (Inventory & Catalog)
+            2. 基础档案更新 (Inventory & Catalog)
          </h3>
          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <ImportCard 
@@ -122,16 +110,26 @@ export const DataCenter: React.FC<DataCenterProps> = ({
        </div>
 
        {/* 3. System Backup */}
-       <div className="bg-amber-50/50 rounded-xl shadow-sm p-6 border border-amber-200">
-         <h3 className="font-bold text-amber-800 mb-4 flex items-center gap-2">
-            <i className="fas fa-shield-alt"></i> 3. 系统备份 (System Backup)
-         </h3>
+       <div className="bg-gradient-to-r from-amber-50 to-orange-50 rounded-xl shadow-sm p-6 border border-amber-200">
+         <div className="flex justify-between items-start mb-4">
+             <h3 className="font-bold text-amber-800 flex items-center gap-2 text-lg">
+                <i className="fas fa-shield-alt"></i> 3. 一键全站备份 (All-in-One Backup)
+             </h3>
+             <span className="bg-amber-100 text-amber-800 text-xs px-2 py-1 rounded border border-amber-200">推荐</span>
+         </div>
+         <p className="text-sm text-amber-700/80 mb-6 max-w-2xl">
+            系统备份文件包含：<br/>
+            1. 所有产品档案、订单流水、广告数据。<br/>
+            2. <strong>库存预算设置</strong> (盘点数、在途、人工日销)。<br/>
+            3. <strong>系统参数</strong> (汇率、备货周期、安全库存)。<br/>
+            <span className="text-xs mt-1 block opacity-70">* 换电脑或重装系统时，只需导出此文件，导入后所有数据和逻辑完美复原。</span>
+         </p>
          <div className="flex gap-4">
-           <button onClick={onExportBackup} className="bg-amber-600 text-white px-6 py-2.5 rounded-lg font-bold shadow hover:bg-amber-700 transition flex items-center gap-2">
-             <i className="fas fa-download"></i> 导出全站备份
+           <button onClick={onExportBackup} className="bg-amber-600 text-white px-6 py-3 rounded-lg font-bold shadow hover:bg-amber-700 transition flex items-center gap-2">
+             <i className="fas fa-download"></i> 导出全量备份 (.xlsx)
            </button>
-           <label className="bg-emerald-600 text-white px-6 py-2.5 rounded-lg font-bold shadow cursor-pointer hover:bg-emerald-700 transition flex items-center gap-2">
-             <i className="fas fa-upload"></i> 导入恢复备份
+           <label className="bg-emerald-600 text-white px-6 py-3 rounded-lg font-bold shadow cursor-pointer hover:bg-emerald-700 transition flex items-center gap-2">
+             <i className="fas fa-upload"></i> 恢复全量备份
              <input type="file" className="hidden" accept=".xlsx" onChange={handleBackupImport} />
            </label>
          </div>

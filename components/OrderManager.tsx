@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useDeferredValue } from 'react';
 import { SaleRecord } from '../types';
 
 interface OrderManagerProps {
@@ -10,14 +10,18 @@ interface OrderManagerProps {
 
 export const OrderManager: React.FC<OrderManagerProps> = ({ salesData, onUpdateOrder, onDeleteOrder, onSave }) => {
   const [search, setSearch] = useState('');
+  // 1. 性能优化：使用 useDeferredValue 让搜索计算在后台进行，优先保证输入框响应
+  const deferredSearch = useDeferredValue(search);
+  
   const [page, setPage] = useState(1);
   const pageSize = 100;
 
   // Intelligent Fuzzy Search
   const filteredIndices = useMemo(() => {
-    if (!search.trim()) return salesData.map((s, i) => ({ s, i }));
+    // 使用延迟后的搜索词进行过滤
+    if (!deferredSearch.trim()) return salesData.map((s, i) => ({ s, i }));
     
-    const terms = search.toLowerCase().split(/\s+/).filter(t => t); // Split by space
+    const terms = deferredSearch.toLowerCase().split(/\s+/).filter(t => t); // Split by space
     
     return salesData.map((s, i) => ({ s, i })).filter(({ s }) => {
       // Create a searchable string from relevant fields
@@ -25,7 +29,7 @@ export const OrderManager: React.FC<OrderManagerProps> = ({ salesData, onUpdateO
       // Check if ALL terms are present in the record (AND logic for refinement)
       return terms.every(term => searchString.includes(term));
     });
-  }, [salesData, search]);
+  }, [salesData, deferredSearch]); // 依赖项改为 deferredSearch
 
   // Then Paginate
   const totalPages = Math.ceil(filteredIndices.length / pageSize) || 1;
@@ -47,6 +51,7 @@ export const OrderManager: React.FC<OrderManagerProps> = ({ salesData, onUpdateO
           <div className="flex gap-3">
              <div className="relative group">
                <i className="fas fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400 text-xs group-focus-within:text-brand-500 transition-colors"></i>
+               {/* 输入框绑定原始 search 状态，保证实时响应 */}
                <input 
                  value={search} 
                  onChange={e => { setSearch(e.target.value); setPage(1); }} 
